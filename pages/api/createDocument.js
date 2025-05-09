@@ -7,27 +7,41 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { name, email, documentType, description, file } = req.body;
+    console.log('[API] Received submission request');
+
+    const formData = req.body;
+
+    // Validate essential fields
+    const { fullName, email, documentType } = formData;
+    if (!fullName || !email || !documentType) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Log what's about to be submitted
+    console.log('[API] Submitting to Firestore with:', {
+      fullName, email, documentType
+    });
 
     const docRef = await addDoc(collection(db, 'documents'), {
-      name,
+      fullName,
       email,
       documentType,
-      description,
-      file,
       status: 'Pending',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      fullFormData: formData
     });
+
+    console.log('[API] Document successfully created with ID:', docRef.id);
 
     return res.status(200).json({ 
       success: true, 
       documentId: docRef.id 
     });
   } catch (error) {
-    console.error('Error creating document:', error);
+    console.error('[API] Error creating document:', error);
     return res.status(500).json({ 
       success: false, 
       error: 'Failed to create document' 
     });
   }
-} 
+}
