@@ -622,54 +622,55 @@ export default function RecoveryForm() {
         </Typography>
 
         <Stepper activeStep={step} alternativeLabel sx={{ mb: 4 }}>
-  {steps.map((label) => (
-    <Step key={label}>
-      <StepLabel>{label}</StepLabel>
-    </Step>
-  ))}
-</Stepper>
+          {steps.map((label) => (
+            <Step key={label}>
+              <StepLabel>{label}</StepLabel>
+            </Step>
+          ))}
+        </Stepper>
 
-<Box
-  component="form"
-  onSubmit={handleSubmit}
-  sx={{ mt: 3 }}
->
-  {renderStepContent()}
+        <Box
+     component="form"
+     onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
+     onSubmit={handleSubmit}
+     sx={{ mt: 3 }}
+        >
 
-  <Box
-    sx={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      mt: 3
-    }}
-  >
-    <Button
-      disabled={step === 0}
-      onClick={() => setStep(step - 1)}
-    >
-      Back
-    </Button>
+          {renderStepContent()}
 
-    {step < steps.length - 1 ? (
-      <Button
-        variant="contained"
-        onClick={() => setStep(step + 1)}
-      >
-        Next
-      </Button>
-    ) : (
-      <Button
-        type="submit"
-        variant="contained"
-        color="primary"
-        disabled={submitting}
-      >
-        Submit Request
-      </Button>
-    )}
-  </Box>
-</Box>
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              mt: 3
+            }}
+          >
+            <Button
+              disabled={step === 0}
+              onClick={() => setStep(step - 1)}
+            >
+              Back
+            </Button>
 
+            {step < steps.length - 1 ? (
+              <Button
+                variant="contained"
+                onClick={() => setStep(step + 1)}
+              >
+                Next
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                variant="contained"
+                color="primary"
+                disabled={submitting}
+              >
+                Submit Request
+              </Button>
+            )}
+          </Box>
+        </Box>
       </Paper>
 
       <Snackbar
