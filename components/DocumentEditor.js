@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
+// Material UI components
 import {
   Box,
   Paper,
@@ -11,52 +12,26 @@ import {
   CircularProgress,
   Grid,
   Chip,
-  IconButton,
-  Tooltip,
-  Alert,
-  Select,
-  MenuItem,
-  Divider,
-  FormControl,
-  InputLabel,
   Avatar
 } from '@mui/material';
+// Material UI icons
 import {
   Save as SaveIcon,
-  Description,
   Cancel as CancelIcon,
   Check as CheckIcon,
   ChatBubble as ChatBubbleIcon,
-  FormatBold as FormatBoldIcon,
-  FormatItalic as FormatItalicIcon,
-  FormatListBulleted as FormatListBulletedIcon,
-  Article as ArticleIcon,
-  Search as SearchIcon,
-  Delete as DeleteIcon,
-  Edit as EditIcon
+  Article as ArticleIcon
 } from '@mui/icons-material';
+// Firebase
 import { doc as firestoreDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+// Diff library
 import { diffLines } from 'diff';
-
-// Mock data for policy snippets/citations
-const POLICY_SNIPPETS = {
-  "binance": {
-    "§9.3": "As per Binance Terms of Service §9.3: 'Users must comply with KYC requirements within 30 days of notification. Failure to complete verification may result in account limitations or suspension of services.'",
-    "§12.1": "Binance Terms §12.1 states: 'All disputes arising out of or in connection with this agreement shall be referred to and finally resolved by arbitration.'"
-  },
-  "regulation": {
-    "GDPR": "Under GDPR Article 17, users have the right to request the erasure of their personal data without undue delay.",
-    "ESMA": "Per ESMA regulation 2021/13, crypto asset service providers must implement robust anti-money laundering procedures."
-  }
-};
 
 // Utility function to parse diffs into individual change blocks
 const createChangeBlocks = (originalText, newText) => {
   // Get diff results
   const diffResults = diffLines(originalText, newText);
-  
-  console.log('Diff results:', JSON.stringify(diffResults, null, 2)); // Debug log
   
   // Prepare arrays to track connected changes
   const blocks = [];
@@ -113,8 +88,6 @@ const createChangeBlocks = (originalText, newText) => {
     }
   });
   
-  console.log('Generated blocks:', JSON.stringify(blocks, null, 2)); // Debug log
-  
   // If no blocks were created but there are differences, create a single block with the entire content
   if (blocks.length === 0 && diffResults.some(part => part.added || part.removed)) {
     blocks.push({
@@ -127,40 +100,6 @@ const createChangeBlocks = (originalText, newText) => {
   }
   
   return blocks;
-};
-
-// Utility function to create inline diff markers
-const createInlineDiffMarkers = (originalText, newText) => {
-  const diffResult = diffLines(originalText, newText);
-  const additions = [];
-  const deletions = [];
-  
-  let linePos = 0;
-  
-  diffResult.forEach(part => {
-    const lines = part.value.split('\n').filter(line => line !== '');
-    if (part.added) {
-      lines.forEach(line => {
-        additions.push({
-          line: linePos,
-          content: line
-        });
-        linePos++;
-      });
-    } else if (part.removed) {
-      lines.forEach(line => {
-        deletions.push({
-          line: linePos,
-          content: line
-        });
-        linePos++;
-      });
-    } else {
-      linePos += lines.length;
-    }
-  });
-  
-  return { additions, deletions };
 };
 
 // The DiffChangeBlock component renders a single changed block
@@ -294,6 +233,12 @@ const DiffChangeBlock = ({ block, onAccept, onReject, isAccepted, isRejected }) 
   );
 };
 
+// Utility function to show save feedback and clear it after a delay
+const showSaveFeedback = (setSaveFeedback, type, message) => {
+  setSaveFeedback({ type, message });
+  setTimeout(() => setSaveFeedback(null), 3000);
+};
+
 export default function DocumentEditor({ document: propDoc }) {
   const router = useRouter();
   const { id: routeId } = router.query;
@@ -399,16 +344,7 @@ export default function DocumentEditor({ document: propDoc }) {
     const selectedOption = currentEditOptions.options.find(option => option.id === optionId);
     if (!selectedOption) return;
     
-    console.log("Selected edit option:", selectedOption);
-    
-    // Store selected option
-    setSelectedEditOption(selectedOption);
-    
     try {
-      // Calculate inline diff markers (for the legacy view)
-      const markers = createInlineDiffMarkers(content, selectedOption.editedText);
-      setInlineDiffMarkers(markers);
-      
       // Create change blocks for side-by-side diff
       const blocks = createChangeBlocks(content, selectedOption.editedText);
       setChangeBlocks(blocks);
@@ -426,8 +362,6 @@ export default function DocumentEditor({ document: propDoc }) {
       
       // Show inline diff view
       setShowInlineDiff(true);
-      
-      console.log("Inline diff enabled, changeBlocks:", blocks.length);
     } catch (error) {
       console.error("Error in handleSelectEditOption:", error);
       
@@ -477,23 +411,10 @@ export default function DocumentEditor({ document: propDoc }) {
         console.log('Changes applied and saved to Firestore successfully');
         
         // Show save feedback
-        setSaveFeedback({
-          type: 'success',
-          message: 'All changes saved'
-        });
-        // Clear feedback after 3 seconds
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'success', 'All changes saved');
       } catch (error) {
         console.error('Error saving applied changes:', error);
-        setSaveFeedback({
-          type: 'error',
-          message: 'Failed to save changes'
-        });
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'error', 'Failed to save changes');
       }
     }
   };
@@ -528,23 +449,10 @@ export default function DocumentEditor({ document: propDoc }) {
         console.log('Rejection saved to Firestore successfully');
         
         // Show save feedback
-        setSaveFeedback({
-          type: 'success',
-          message: 'Discarded all changes'
-        });
-        // Clear feedback after 3 seconds
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'success', 'Discarded all changes');
       } catch (error) {
         console.error('Error saving rejection:', error);
-        setSaveFeedback({
-          type: 'error',
-          message: 'Failed to record discarded changes'
-        });
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'error', 'Failed to record discarded changes');
       }
     }
   };
@@ -593,23 +501,10 @@ export default function DocumentEditor({ document: propDoc }) {
         console.log('Individual block change saved to Firestore');
         
         // Show save feedback
-        setSaveFeedback({
-          type: 'success',
-          message: 'Change saved'
-        });
-        // Clear feedback after 3 seconds
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'success', 'Change saved');
       } catch (error) {
         console.error('Error saving document content:', error);
-        setSaveFeedback({
-          type: 'error',
-          message: 'Failed to save change'
-        });
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'error', 'Failed to save change');
       }
     }
   };
@@ -649,23 +544,10 @@ export default function DocumentEditor({ document: propDoc }) {
         console.log('Change acceptance saved to chat history');
         
         // Show save feedback
-        setSaveFeedback({
-          type: 'success',
-          message: 'Change accepted and saved'
-        });
-        // Clear feedback after 3 seconds
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'success', 'Change accepted and saved');
       } catch (error) {
         console.error('Error saving change acceptance:', error);
-        setSaveFeedback({
-          type: 'error',
-          message: 'Failed to save acceptance'
-        });
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'error', 'Failed to save acceptance');
       }
     }
   };
@@ -702,23 +584,10 @@ export default function DocumentEditor({ document: propDoc }) {
         console.log('Change rejection saved to chat history');
         
         // Show save feedback
-        setSaveFeedback({
-          type: 'success',
-          message: 'Rejection saved'
-        });
-        // Clear feedback after 3 seconds
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'success', 'Rejection saved');
       } catch (error) {
         console.error('Error saving change rejection:', error);
-        setSaveFeedback({
-          type: 'error',
-          message: 'Failed to save rejection'
-        });
-        setTimeout(() => {
-          setSaveFeedback(null);
-        }, 3000);
+        showSaveFeedback(setSaveFeedback, 'error', 'Failed to save rejection');
       }
     }
   };
@@ -836,23 +705,6 @@ export default function DocumentEditor({ document: propDoc }) {
     }
   };
 
-  // Handle search for policy snippets
-  const handlePolicySearch = (query) => {
-    if (!query.trim()) return null;
-    
-    const [company, section] = query.split('§');
-    if (!company || !section) return null;
-    
-    const companyKey = company.trim().toLowerCase();
-    const sectionKey = '§' + section.trim();
-    
-    if (POLICY_SNIPPETS[companyKey] && POLICY_SNIPPETS[companyKey][sectionKey]) {
-      return POLICY_SNIPPETS[companyKey][sectionKey];
-    }
-    
-    return null;
-  };
-
   // Handle save document
   const handleSaveDocument = async () => {
     if (!documentId) return;
@@ -871,26 +723,22 @@ export default function DocumentEditor({ document: propDoc }) {
       
       const docRef = firestoreDoc(db, 'documents', documentId);
       
-      console.log('Saving document with content length:', content.length);
-      
       await updateDoc(docRef, {
         generatedLetter: content,
         chatHistory: updatedChatHistory,
         updatedAt: new Date()
       });
       
-      console.log('Document saved successfully with Save button');
-      setChatHistory(updatedChatHistory);
+      // Update local state to reflect what was saved
+      setDocData(prevData => ({
+        ...prevData,
+        generatedLetter: content,
+        chatHistory: updatedChatHistory,
+        updatedAt: new Date()
+      }));
       
-      // Show save feedback
-      setSaveFeedback({
-        type: 'success',
-        message: 'Document saved successfully'
-      });
-      // Clear feedback after 3 seconds
-      setTimeout(() => {
-        setSaveFeedback(null);
-      }, 3000);
+      setChatHistory(updatedChatHistory);
+      showSaveFeedback(setSaveFeedback, 'success', 'Document saved successfully');
     } catch (error) {
       console.error('Error saving document:', error);
       
@@ -903,14 +751,7 @@ export default function DocumentEditor({ document: propDoc }) {
       };
       setChatHistory(prev => [...prev, errorMessage]);
       
-      // Show save feedback error
-      setSaveFeedback({
-        type: 'error',
-        message: 'Failed to save document'
-      });
-      setTimeout(() => {
-        setSaveFeedback(null);
-      }, 3000);
+      showSaveFeedback(setSaveFeedback, 'error', 'Failed to save document');
     } finally {
       setIsSaving(false);
     }
@@ -946,6 +787,20 @@ export default function DocumentEditor({ document: propDoc }) {
                     sx={{ mr: 1 }}
                   />
                 )}
+                
+                {/* Save & Close button */}
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  startIcon={<SaveIcon />}
+                  onClick={async () => {
+                    await handleSaveDocument();
+                    router.push('/');
+                  }}
+                  disabled={isSaving}
+                >
+                  Save & Close
+                </Button>
                 
                 {/* Save button */}
                 <Button
@@ -1213,24 +1068,24 @@ export default function DocumentEditor({ document: propDoc }) {
                       <Typography variant="body1">{message.text}</Typography>
                       
                       {/* Edit options if available */}
-                                                    {message.options && (
-                                <Box sx={{ mt: 2 }}>
-                                  <Typography variant="subtitle2" sx={{ mb: 1 }}>Choose an edit style:</Typography>
-                                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                                    {message.options.map(option => (
-                                      <Chip
-                                        key={option.id}
-                                        label={option.title}
-                                        clickable
-                                        onClick={() => handleSelectEditOption(option.id)}
-                                        color="primary"
-                                        variant={selectedEditOption?.id === option.id ? "filled" : "outlined"}
-                                        sx={{ mb: 1 }}
-                                      />
-                                    ))}
-                                  </Box>
-                                </Box>
-                              )}
+                      {message.options && (
+                        <Box sx={{ mt: 2 }}>
+                          <Typography variant="subtitle2" sx={{ mb: 1 }}>Choose an edit style:</Typography>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                            {message.options.map(option => (
+                              <Chip
+                                key={option.id}
+                                label={option.title}
+                                clickable
+                                onClick={() => handleSelectEditOption(option.id)}
+                                color="primary"
+                                variant={selectedEditOption?.id === option.id ? "filled" : "outlined"}
+                                sx={{ mb: 1 }}
+                              />
+                            ))}
+                          </Box>
+                        </Box>
+                      )}
                     </Box>
                     
                     {/* User or AI indicator */}
