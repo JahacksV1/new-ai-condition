@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { documentId } = req.body;
+    const { documentId, customPrompt } = req.body;
     
     if (!documentId) {
       return res.status(400).json({ error: 'Document ID is required' });
@@ -40,7 +40,10 @@ export default async function handler(req, res) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ platformName })
+        body: JSON.stringify({ 
+          platformName,
+          customPrompt 
+        })
       });
       
       const searchResult = await searchResponse.json();
@@ -72,6 +75,7 @@ Based on the client's information, create a comprehensive policy reference docum
   - Any other policies relevant to the specific case
 
 This document will be used as a reference for legal action, so accuracy and completeness are essential.
+${customPrompt ? `\n\nAdditional instructions: ${customPrompt}` : ''}
 `.trim();
 
         const userPrompt = `Client Data:\n${JSON.stringify(formData, null, 2)}
@@ -80,7 +84,7 @@ Create a detailed policy reference document for ${platformName || 'the platform'
 
         // Call OpenAI
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: 'gpt-4o',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }

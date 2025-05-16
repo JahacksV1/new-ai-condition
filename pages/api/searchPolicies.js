@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+import { parse as parseUrl } from 'url';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const SERP_API_KEY = process.env.SERP_API_KEY || 'YOUR_SERP_API_KEY'; // Set this in your .env file
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -8,16 +12,23 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { platformName } = req.body;
+    const { platformName, customPrompt } = req.body;
     
     if (!platformName) {
       return res.status(400).json({ error: 'Platform name is required' });
     }
 
-    // Search for policy documents
-    const searchResults = await searchPlatformPolicies(platformName);
+    // Detect the company's official domain
+    const officialDomain = await detectOfficialDomain(platformName);
+    
+    // Generate search queries
+    const queries = generateSearchQueries(platformName, officialDomain, customPrompt);
+    
+    // Search for policy documents using the detected domain if possible
+    const searchResults = await searchPlatformPolicies(queries, officialDomain);
     
     if (searchResults.length === 0) {
+      console.log(`[API] No search results found for ${platformName}`);
       return res.status(200).json({
         success: false,
         message: 'No policy documents found',
@@ -25,24 +36,29 @@ export default async function handler(req, res) {
       });
     }
 
+    // Log the search results
+    console.log(`[API] Found ${searchResults.length} search results for ${platformName}:`, 
+      searchResults.map(url => url.substring(0, 100) + (url.length > 100 ? '...' : '')));
+
     // Extract content from search results (up to 3 URLs)
     const extractedContent = await Promise.all(
-      searchResults.slice(0, 3).map(url => extractContentFromUrl(url))
+      searchResults.slice(0, 3).map(url => extractContentFromUrl(url, platformName))
     );
 
     // Filter out failed extractions
-    const validContent = extractedContent.filter(item => item && item.content);
+    const validContent = extractedContent.filter(item => item && item.content && item.content.length > 100);
 
     if (validContent.length === 0) {
+      console.log(`[API] No valid content extracted for ${platformName}`);
       return res.status(200).json({
         success: false,
         message: 'Could not extract content from any of the URLs',
-        fallbackText: generateFallbackText(platformName)
+        fallbackText: generateFallbackText(platformName, searchResults)
       });
     }
 
     // Analyze and structure the extracted content
-    const structuredPolicy = await analyzePolicyContent(platformName, validContent);
+    const structuredPolicy = await analyzePolicyContent(platformName, validContent, customPrompt);
 
     return res.status(200).json({
       success: true,
@@ -60,222 +76,297 @@ export default async function handler(req, res) {
   }
 }
 
-// Function to search for platform policies
-async function searchPlatformPolicies(platformName) {
+// Function to detect the official domain for a company
+async function detectOfficialDomain(platformName) {
   try {
-    // Use web search API to find relevant policies
-    const searchQueries = [
-      `${platformName} terms of service official site`,
-      `${platformName} user agreement arbitration clause`,
-      `${platformName} dispute resolution policy`,
-    ];
+    const formattedName = platformName.toLowerCase().replace(/\s+/g, '');
     
-    // For this implementation, we'll use a simulated search function
-    // In a production environment, you would replace this with a real web search API (e.g., Bing, Google)
-    const searchResults = await simulatedWebSearch(searchQueries);
-    return searchResults;
+    // Check common TLDs
+    const possibleDomains = [
+      `${formattedName}.com`,
+      `${formattedName}.org`,
+      `${formattedName}.net`,
+      `${formattedName}.io`
+    ];
+
+    // For multi-word companies, also check with dash
+    if (platformName.includes(' ')) {
+      const dashedName = platformName.toLowerCase().replace(/\s+/g, '-');
+      possibleDomains.push(`${dashedName}.com`);
+    }
+
+    // Use SerpAPI to find official domain
+    const query = `${platformName} official website`;
+    
+    // If we have a SERP API key, use it to validate the domain
+    if (SERP_API_KEY && SERP_API_KEY !== 'YOUR_SERP_API_KEY') {
+      const searchResponse = await axios.get('https://serpapi.com/search', {
+        params: {
+          q: query,
+          api_key: SERP_API_KEY,
+          num: 5
+        }
+      });
+      
+      const organicResults = searchResponse.data.organic_results || [];
+      
+      for (const result of organicResults) {
+        if (result.link) {
+          const urlObj = parseUrl(result.link);
+          const hostname = urlObj.hostname;
+          
+          // Check if the hostname contains the company name
+          if (hostname && hostname.includes(formattedName)) {
+            return hostname;
+          }
+        }
+      }
+    }
+    
+    // If SERP API fails or no good result, use OpenAI to guess the domain
+    const domainPrompt = `
+What is the official website domain for ${platformName}?
+Return only the domain name (e.g., "example.com") with no additional text or explanation.
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You provide concise technical information about company domains.' },
+        { role: 'user', content: domainPrompt }
+      ],
+      max_tokens: 20
+    });
+    
+    const suggestedDomain = completion.choices[0].message.content.trim().toLowerCase();
+    
+    // Clean up any extra text to ensure we just have the domain
+    const domainPattern = /([a-z0-9][a-z0-9-]*\.(?:com|org|net|io|app|co))/i;
+    const match = suggestedDomain.match(domainPattern);
+    
+    return match ? match[0] : possibleDomains[0]; // Fallback to first possible domain if no match
   } catch (error) {
-    console.error('Error searching for policies:', error);
-    return [];
+    console.error('Error detecting official domain:', error);
+    // Fallback to basic domain name guessing if everything fails
+    return `${platformName.toLowerCase().replace(/\s+/g, '')}.com`;
   }
 }
 
-// Simulated web search function (replace with actual search API in production)
-async function simulatedWebSearch(queries) {
-  // This is a placeholder - in a real implementation, you would call an actual search API
-  // For demo purposes, we'll return some dummy URLs based on the queries
-  const platformName = queries[0].split(' ')[0].toLowerCase();
+// Generate search queries based on platform name and custom prompt
+function generateSearchQueries(platformName, officialDomain, customPrompt) {
+  const domainPart = officialDomain ? `site:${officialDomain}` : '';
   
-  const possibleUrls = {
-    paypal: [
-      'https://www.paypal.com/us/webapps/mpp/ua/useragreement-full',
-      'https://www.paypal.com/us/webapps/mpp/ua/legalhub-full',
-      'https://www.paypal.com/us/webapps/mpp/ua/disputes-full'
-    ],
-    binance: [
-      'https://www.binance.com/en/terms',
-      'https://www.binance.com/en/support/articles/360015700832-Binance-Terms-of-Use',
-      'https://www.binance.com/en/support/faq/arbitration-and-dispute-resolution'
-    ],
-    coinbase: [
-      'https://www.coinbase.com/legal/user_agreement',
-      'https://www.coinbase.com/legal/arbitration-agreement',
-      'https://www.coinbase.com/legal/dispute-resolution'
-    ],
-    default: [
-      `https://www.${platformName}.com/terms`,
-      `https://www.${platformName}.com/terms-of-service`,
-      `https://www.${platformName}.com/legal`
-    ]
-  };
+  const defaultQueries = [
+    `${domainPart} ${platformName} terms of service`,
+    `${domainPart} ${platformName} user agreement`,
+    `${domainPart} ${platformName} arbitration clause`,
+    `${domainPart} ${platformName} dispute resolution`,
+    `${domainPart} ${platformName} legal terms`,
+  ];
   
-  // Return URLs based on the detected platform, or default URLs if not found
-  const urls = possibleUrls[platformName] || possibleUrls.default;
+  // If we have a custom prompt, add it as a query as well
+  if (customPrompt) {
+    defaultQueries.push(`${domainPart} ${platformName} ${customPrompt}`);
+  }
   
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  return urls;
+  return defaultQueries;
 }
 
-// Function to extract content from a URL
-async function extractContentFromUrl(url) {
+// Function to search for platform policies using SerpAPI
+async function searchPlatformPolicies(queries, officialDomain) {
   try {
-    // In a real implementation, you would fetch the actual web page and parse its content
-    // For this example, we'll simulate the extraction
+    if (SERP_API_KEY && SERP_API_KEY !== 'YOUR_SERP_API_KEY') {
+      // Use SerpAPI for real search results
+      const searchPromises = queries.map(async (query) => {
+        try {
+          const response = await axios.get('https://serpapi.com/search', {
+            params: {
+              q: query,
+              api_key: SERP_API_KEY,
+              num: 3
+            }
+          });
+
+          const organicResults = response.data.organic_results || [];
+          return organicResults.map(result => result.link);
+        } catch (error) {
+          console.error(`Error searching with query "${query}":`, error);
+          return [];
+        }
+      });
+
+      // Collect all search results
+      const searchResultsArrays = await Promise.all(searchPromises);
+      let allSearchResults = searchResultsArrays.flat();
+      
+      // Filter for unique URLs
+      allSearchResults = [...new Set(allSearchResults)];
+      
+      // Filter for URLs that belong to the official domain if specified
+      if (officialDomain) {
+        allSearchResults = allSearchResults.filter(url => {
+          try {
+            const urlObj = parseUrl(url);
+            return urlObj.hostname.includes(officialDomain) || 
+                   officialDomain.includes(urlObj.hostname);
+          } catch (e) {
+            return false;
+          }
+        });
+      }
+      
+      // Filter for policy-like URLs
+      const policyKeywords = ['terms', 'policy', 'legal', 'agreement', 'arbitration', 'dispute'];
+      const policyUrls = allSearchResults.filter(url => 
+        policyKeywords.some(keyword => url.toLowerCase().includes(keyword))
+      );
+      
+      // Return policy URLs if found, otherwise return all search results
+      return policyUrls.length > 0 ? policyUrls : allSearchResults;
+    } else {
+      // Fallback to simulated search
+      console.warn('SERP_API_KEY not configured. Using simulated search results.');
+      return simulateDomainBasedSearch(queries[0], officialDomain);
+    }
+  } catch (error) {
+    console.error('Error searching for policies:', error);
+    // Fallback to simulated search
+    return simulateDomainBasedSearch(queries[0], officialDomain);
+  }
+}
+
+// Simulate search results based on domain (for when API key is missing)
+function simulateDomainBasedSearch(query, officialDomain) {
+  const platformName = query.split(' ')[0].toLowerCase();
+  const domain = officialDomain || `${platformName}.com`;
+  
+  // Generate plausible URLs based on the domain
+  return [
+    `https://${domain}/terms-of-service`,
+    `https://${domain}/legal/user-agreement`,
+    `https://${domain}/legal/terms`,
+    `https://${domain}/legal/arbitration`
+  ];
+}
+
+// Function to extract content from a URL using web scraping
+async function extractContentFromUrl(url, platformName) {
+  try {
+    console.log(`[API] Attempting to extract content from: ${url}`);
     
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Make HTTP request to the URL
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml'
+      },
+      timeout: 10000 // 10 second timeout
+    });
     
-    // Extract platform name from URL for simulation
-    const urlParts = url.split('/');
-    const domain = urlParts[2];
-    const platformName = domain.split('.')[1];
+    // Parse HTML with cheerio
+    const $ = cheerio.load(response.data);
     
-    // Generate simulated content
-    const content = simulateContentExtraction(url, platformName);
+    // Remove script tags, style tags, and hidden elements
+    $('script, style, [style*="display:none"], [style*="display: none"], meta, link, noscript').remove();
+    
+    // Get page title
+    const title = $('title').text().trim() || $('h1').first().text().trim() || `${platformName} Policy`;
+    
+    // Extract the main content
+    // Prefer known content containers
+    const contentSelectors = [
+      'main', 'article', '.content', '.main-content', '.article', 
+      '.terms', '.terms-of-service', '.policies', '.legal', 
+      '#content', '#main-content', '#terms', '#legal'
+    ];
+    
+    let content = '';
+    
+    // Try selectors first
+    for (const selector of contentSelectors) {
+      const selectedContent = $(selector).text();
+      if (selectedContent && selectedContent.length > 500) {
+        content = selectedContent;
+        break;
+      }
+    }
+    
+    // If no content found with selectors, get all paragraphs
+    if (!content || content.length < 500) {
+      content = $('p').map((i, el) => $(el).text().trim()).get().join('\n\n');
+    }
+    
+    // If still no content, get the body text
+    if (!content || content.length < 500) {
+      content = $('body').text().trim()
+        .replace(/\s+/g, ' ')  // Replace multiple spaces with a single space
+        .replace(/\n+/g, '\n') // Replace multiple newlines with a single newline
+        .slice(0, 20000);      // Limit to 20,000 characters
+    }
+    
+    // Clean up the content
+    content = content
+      .replace(/\t/g, ' ')       // Replace tabs with spaces
+      .replace(/\s{2,}/g, ' ')   // Replace multiple spaces with a single space
+      .replace(/\n{3,}/g, '\n\n'); // Replace 3+ newlines with double newlines
+    
+    // If the content is too short or too noisy, it's probably not useful
+    if (content.length < 500 || content.length > 100000) {
+      console.log(`[API] Content extraction failed or noisy for ${url}: length=${content.length}`);
+      return null;
+    }
+    
+    console.log(`[API] Successfully extracted ${content.length} characters from ${url}`);
     
     return {
       url,
       content,
-      title: `${platformName.charAt(0).toUpperCase() + platformName.slice(1)} ${url.includes('arbitration') ? 'Arbitration Policy' : 'Terms of Service'}`
+      title
     };
   } catch (error) {
-    console.error(`Error extracting content from ${url}:`, error);
+    console.error(`[API] Error extracting content from ${url}:`, error.message);
     return null;
   }
 }
 
-// Simulate content extraction (replace with actual HTML parsing in production)
-function simulateContentExtraction(url, platformName) {
-  // This would be replaced with actual web scraping in a production environment
-  // Check URL path to determine what kind of content to simulate
-  if (url.includes('arbitration') || url.includes('dispute')) {
-    return `
-    ARBITRATION AGREEMENT FOR ${platformName.toUpperCase()}
-    
-    You and ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} agree that any dispute, claim or controversy arising out of
-    or relating to these Terms or the breach, termination, enforcement, interpretation,
-    or validity thereof or the use of the Services (collectively, "Disputes") will be
-    settled by binding arbitration, except that each party retains the right to bring
-    an individual action in small claims court and the right to seek injunctive or other
-    equitable relief in a court of competent jurisdiction to prevent the actual or
-    threatened infringement, misappropriation, or violation of a party's copyrights,
-    trademarks, trade secrets, patents, or other intellectual property rights.
-    
-    The arbitration will be conducted in accordance with the Commercial Arbitration Rules
-    and the Supplementary Procedures for Consumer Related Disputes of the American
-    Arbitration Association ("AAA") then in effect, except as modified by these Terms.
-    
-    The arbitration will be conducted by a single, neutral arbitrator. If the Dispute is
-    for $10,000 or less, the arbitration will be conducted solely on the basis of documents
-    submitted to the arbitrator, unless you request a hearing or the arbitrator determines
-    that a hearing is necessary. If the Dispute is for more than $10,000, your right to a
-    hearing will be determined by the AAA Rules.
-    
-    YOU AND ${platformName.toUpperCase()} HEREBY WAIVE ANY RIGHTS TO LITIGATE CLAIMS IN A COURT
-    OR TO PARTICIPATE IN A CLASS ACTION OR REPRESENTATIVE ACTION WITH RESPECT TO ANY CLAIMS
-    SUBJECT TO ARBITRATION. YOU ACKNOWLEDGE THAT YOU MAY NOT OBTAIN THE SAME REMEDIES AS
-    IN COURT.
-    `;
-  } 
-  
-  if (url.includes('terms') || url.includes('agreement')) {
-    return `
-    TERMS OF SERVICE FOR ${platformName.toUpperCase()}
-    
-    1. ACCOUNT CREATION AND USAGE
-    
-    1.1 Eligibility. To be eligible to use the ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} Services, you must be at least 18 years old.
-    
-    1.2 Account Registration. You may need to register for a ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} account to access Services. When you register,
-    you will be required to provide accurate personal information and you agree to update this information should it change.
-    
-    1.3 Account Security. You are responsible for maintaining the confidentiality of your account credentials
-    and for all activities that occur under your account. You agree to notify ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} immediately of any
-    unauthorized use of your account.
-    
-    2. ACCOUNT SUSPENSION AND TERMINATION
-    
-    2.1 We may suspend or terminate your access to the Services if:
-       (a) you violate these Terms;
-       (b) we are required to do so by law or by any regulatory authority;
-       (c) we suspect fraud, money laundering, or other illegal activity;
-       (d) we suspect any other misuse of your account; or
-       (e) your identity verification processes are not completed.
-    
-    2.2 Account Freezing. ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} reserves the right to freeze your account and/or funds if:
-       (a) we detect suspicious activity;
-       (b) we are required to do so by law or court order;
-       (c) you have violated these Terms;
-       (d) your account is subject to pending litigation, investigation, or government proceeding.
-    
-    3. IDENTITY VERIFICATION
-    
-    3.1 ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} implements Know-Your-Customer (KYC) and Anti-Money Laundering (AML) procedures.
-    You agree to provide all information requested for identity verification purposes.
-    
-    3.2 ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} reserves the right to refuse service, terminate accounts, or remove
-    content if you fail to comply with applicable legal obligations or these Terms.
-    `;
-  }
-  
-  // Default content for other URLs
-  return `
-  GENERAL POLICIES FOR ${platformName.toUpperCase()}
-  
-  This document outlines the general policies governing the use of ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} services.
-  
-  A. WITHDRAWAL RESTRICTIONS
-  
-  ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} may, in its sole discretion, impose limits on withdrawals, including:
-  - Daily, weekly, or monthly limits
-  - Holding periods for deposits
-  - Additional verification requirements for large withdrawals
-  - Temporary suspension of withdrawals for security or compliance reasons
-  
-  B. DISPUTE RESOLUTION
-  
-  In the event of any dispute between you and ${platformName.charAt(0).toUpperCase() + platformName.slice(1)}, we encourage you to first
-  contact our customer support team. If the issue cannot be resolved through customer support,
-  please refer to our full Arbitration Agreement for further steps.
-  
-  C. PRIVACY AND DATA USAGE
-  
-  ${platformName.charAt(0).toUpperCase() + platformName.slice(1)} collects and processes personal information as described in our Privacy Policy.
-  We implement appropriate security measures to protect your personal information.
-  `;
-}
-
 // Function to analyze policy content using OpenAI
-async function analyzePolicyContent(platformName, extractedContent) {
+async function analyzePolicyContent(platformName, extractedContent, customPrompt) {
   try {
     // Combine all extracted content for analysis
     const combinedContent = extractedContent.map(item => 
-      `SOURCE: ${item.title}\n\n${item.content}`
+      `SOURCE: ${item.title}\nURL: ${item.url}\n\n${item.content.substring(0, 15000)}`
     ).join('\n\n' + '-'.repeat(50) + '\n\n');
     
+    // Customize the system prompt based on any custom instructions
+    let systemPrompt = 'You are a legal document analyzer that extracts and structures policy information.';
+    
+    if (customPrompt) {
+      systemPrompt += ` ${customPrompt}`;
+    }
+    
     // Use OpenAI to analyze and structure the content
-    const prompt = `
+    const userPrompt = `
 You are analyzing the Terms of Service and policies for ${platformName}. Below are excerpts from their official documents.
 
 Your task is to extract and organize the following information:
 
-1. RELEVANT POLICIES: Extract all policies relevant to account freezing, ID verification, fund withdrawal restrictions, and user rights.
+1. RELEVANT POLICIES: Extract all policies relevant to account freezing, ID verification, fund withdrawal restrictions, and user rights. Format as a markdown section with the heading "## RELEVANT POLICIES".
 
-2. ARBITRATION POLICIES: Extract all clauses related to arbitration, dispute resolution, and legal proceedings.
+2. ARBITRATION POLICIES: Extract all clauses related to arbitration, dispute resolution, and legal proceedings. Format as a markdown section with the heading "## ARBITRATION POLICIES".
 
-Format your response in Markdown with clear section headers and bullet points. Include exact quotes where possible, with section numbers if available.
+Format your response using Markdown with clear section headers. Include exact quotes where possible, with section numbers if available.
+
+DO NOT MAKE UP OR FABRICATE any policies. If you cannot find specific information on a topic, state "No specific information found about [topic]."
 
 CONTENT TO ANALYZE:
 ${combinedContent}
 `;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4o',
       messages: [
-        { role: 'system', content: 'You are a legal document analyzer that extracts and structures policy information.' },
-        { role: 'user', content: prompt }
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
       ]
     });
     
@@ -291,7 +382,7 @@ ${sourceLinks.map(url => `- [${url}](${url})`).join('\n')}
     
     return structuredAnalysis + '\n\n' + sourcesSection;
   } catch (error) {
-    console.error('Error analyzing policy content with OpenAI:', error);
+    console.error('[API] Error analyzing policy content with OpenAI:', error);
     return generateFallbackText(platformName, extractedContent.map(item => item.url));
   }
 }
