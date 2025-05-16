@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
 import {
   Container,
   Typography,
@@ -20,6 +21,7 @@ import { db } from '../config/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 
 export default function Admin() {
+  const router = useRouter();
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDoc, setSelectedDoc] = useState(null);
@@ -125,7 +127,25 @@ export default function Admin() {
                         onClick={() => handleOpenEditor(doc)}
                         sx={{ mr: 1 }}
                       >
-                        View/Edit
+                        View/Edit Letter
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="info"
+                        onClick={() => router.push(`/affidavit/${doc.id}`)}
+                        sx={{ mr: 1 }}
+                      >
+                        Edit Affidavit
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="success"
+                        onClick={() => router.push(`/policy/${doc.id}`)}
+                        sx={{ mr: 1 }}
+                      >
+                        Edit Policy
                       </Button>
                       <Button
                         size="small"

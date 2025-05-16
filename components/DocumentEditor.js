@@ -241,7 +241,7 @@ const showSaveFeedback = (setSaveFeedback, type, message) => {
   setTimeout(() => setSaveFeedback(null), 3000);
 };
 
-export default function DocumentEditor({ document: propDoc }) {
+export default function DocumentEditor({ document: propDoc, onSaveOverride, fieldLabel = 'Document Text' }) {
   const router = useRouter();
   const { id: routeId } = router.query;
   const documentId = propDoc?.id || routeId;
@@ -644,7 +644,9 @@ export default function DocumentEditor({ document: propDoc }) {
         body: JSON.stringify({
           content,
           instruction: userMessage.text,
-          docType: docData?.type || 'letter',
+          docType: fieldLabel.includes('Affidavit') ? 'affidavit' : 
+                  fieldLabel.includes('Policy') ? 'policy' : 
+                  docData?.type || 'letter',
           targetMode: isTargetedEdit ? 'targeted' : 'general'
         }),
       });
@@ -726,23 +728,35 @@ export default function DocumentEditor({ document: propDoc }) {
       };
       const updatedChatHistory = [...chatHistory, saveMessage];
       
-      const docRef = firestoreDoc(db, 'documents', documentId);
+      let saveSuccess = false;
       
-      // Use a synchronous function for the Firestore update
-      await updateDoc(docRef, {
-        generatedLetter: content,
-        chatHistory: updatedChatHistory,
-        updatedAt: new Date()
-      });
+      // Use onSaveOverride if provided, otherwise use default save behavior
+      if (onSaveOverride) {
+        saveSuccess = await onSaveOverride(content, updatedChatHistory);
+      } else {
+        const docRef = firestoreDoc(db, 'documents', documentId);
+        
+        // Use a synchronous function for the Firestore update
+        await updateDoc(docRef, {
+          generatedLetter: content,
+          chatHistory: updatedChatHistory,
+          updatedAt: new Date()
+        });
+        saveSuccess = true;
+      }
       
-      // Success handling
-      console.log('Document saved successfully to Firestore');
-      showSaveFeedback(setSaveFeedback, 'success', 'Document saved successfully');
-      
-      // Navigate back to admin page after a brief delay to ensure feedback is seen
-      setTimeout(() => {
-        router.push('/admin');
-      }, 500);
+      if (saveSuccess) {
+        // Success handling
+        console.log('Document saved successfully to Firestore');
+        showSaveFeedback(setSaveFeedback, 'success', 'Document saved successfully');
+        
+        // Navigate back to admin page after a brief delay to ensure feedback is seen
+        setTimeout(() => {
+          router.push('/admin');
+        }, 500);
+      } else {
+        throw new Error('Save unsuccessful');
+      }
     } catch (error) {
       console.error('Error saving document:', error);
       showSaveFeedback(setSaveFeedback, 'error', 'Failed to save document');
@@ -794,7 +808,7 @@ export default function DocumentEditor({ document: propDoc }) {
           <Paper elevation={2} sx={{ p: 3, height: 'calc(100vh - 110px)', display: 'flex', flexDirection: 'column' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexShrink: 0 }}>
               <Typography variant="h6" sx={{ flexShrink: 0 }}>
-                Document Content
+                {fieldLabel}
               </Typography>
               
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
