@@ -24,22 +24,23 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [selectedDoc, setSelectedDoc] = useState(null);
 
-  useEffect(() => {
-    const fetchDocuments = async () => {
-      try {
-        const querySnapshot = await getDocs(collection(db, 'documents'));
-        const docs = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setDocuments(docs);
-      } catch (error) {
-        console.error('Error fetching documents:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const fetchDocuments = async () => {
+    try {
+      setLoading(true);
+      const querySnapshot = await getDocs(collection(db, 'documents'));
+      const docs = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setDocuments(docs);
+    } catch (error) {
+      console.error('Error fetching documents:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchDocuments();
   }, []);
 
@@ -62,6 +63,8 @@ export default function Admin() {
 
   const handleCloseEditor = () => {
     setSelectedDoc(null);
+    // Refresh the document list after editor is closed
+    fetchDocuments();
   };
 
   const handleDownload = (doc) => {
@@ -159,6 +162,7 @@ export default function Admin() {
         onClose={handleCloseEditor}
         maxWidth="lg"
         fullWidth
+        onExited={fetchDocuments}
       >
         {selectedDoc && <DocumentEditor document={selectedDoc} />}
       </Dialog>

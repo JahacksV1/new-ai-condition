@@ -12,7 +12,8 @@ import {
   CircularProgress,
   Grid,
   Chip,
-  Avatar
+  Avatar,
+  IconButton
 } from '@mui/material';
 // Material UI icons
 import {
@@ -20,7 +21,8 @@ import {
   Cancel as CancelIcon,
   Check as CheckIcon,
   ChatBubble as ChatBubbleIcon,
-  Article as ArticleIcon
+  Article as ArticleIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 // Firebase
 import { doc as firestoreDoc, getDoc, updateDoc } from 'firebase/firestore';
@@ -705,9 +707,12 @@ export default function DocumentEditor({ document: propDoc }) {
     }
   };
 
-  // Handle save document
-  const handleSaveDocument = async () => {
-    if (!documentId) return;
+  // Handle save and exit document
+  const handleSaveAndExit = async () => {
+    if (!documentId) {
+      showSaveFeedback(setSaveFeedback, 'error', 'No document ID found');
+      return;
+    }
     
     setIsSaving(true);
     
@@ -723,26 +728,26 @@ export default function DocumentEditor({ document: propDoc }) {
       
       const docRef = firestoreDoc(db, 'documents', documentId);
       
+      // Use a synchronous function for the Firestore update
       await updateDoc(docRef, {
         generatedLetter: content,
         chatHistory: updatedChatHistory,
         updatedAt: new Date()
       });
       
-      // Update local state to reflect what was saved
-      setDocData(prevData => ({
-        ...prevData,
-        generatedLetter: content,
-        chatHistory: updatedChatHistory,
-        updatedAt: new Date()
-      }));
-      
-      setChatHistory(updatedChatHistory);
+      // Success handling
+      console.log('Document saved successfully to Firestore');
       showSaveFeedback(setSaveFeedback, 'success', 'Document saved successfully');
+      
+      // Navigate back to admin page after a brief delay to ensure feedback is seen
+      setTimeout(() => {
+        router.push('/admin');
+      }, 500);
     } catch (error) {
       console.error('Error saving document:', error);
+      showSaveFeedback(setSaveFeedback, 'error', 'Failed to save document');
       
-      // Show error message
+      // Add error message to chat
       const errorMessage = {
         id: Date.now(),
         type: 'error',
@@ -750,10 +755,26 @@ export default function DocumentEditor({ document: propDoc }) {
         timestamp: new Date().toISOString()
       };
       setChatHistory(prev => [...prev, errorMessage]);
-      
-      showSaveFeedback(setSaveFeedback, 'error', 'Failed to save document');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Handle close without saving
+  const handleClose = () => {
+    if (window.location.pathname === '/admin') {
+      // If we're inside a dialog on the admin page, just close the dialog
+      // This will trigger the parent component's onClose handler
+      if (router.query.id) {
+        // If we have a direct URL with ID, navigate to admin
+        router.push('/admin');
+      } else {
+        // Otherwise we're in a dialog, let the Dialog's onClose handle it
+        router.back();
+      }
+    } else {
+      // Otherwise navigate to admin page
+      router.push('/admin');
     }
   };
 
@@ -788,29 +809,25 @@ export default function DocumentEditor({ document: propDoc }) {
                   />
                 )}
                 
-                {/* Save & Close button */}
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  startIcon={<SaveIcon />}
-                  onClick={async () => {
-                    await handleSaveDocument();
-                    router.push('/');
-                  }}
-                  disabled={isSaving}
+                {/* Exit without saving button */}
+                <IconButton 
+                  color="error" 
+                  onClick={handleClose}
+                  sx={{ border: '1px solid', borderColor: 'error.main' }}
                 >
-                  Save & Close
-                </Button>
+                  <CloseIcon />
+                </IconButton>
                 
-                {/* Save button */}
+                {/* Save & Exit button */}
                 <Button
                   variant="contained"
                   color="primary"
                   startIcon={<SaveIcon />}
-                  onClick={handleSaveDocument}
+                  onClick={handleSaveAndExit}
                   disabled={isSaving}
+                  size="large"
                 >
-                  {isSaving ? 'Saving...' : 'Save'}
+                  {isSaving ? 'Saving...' : 'Save & Exit'}
                 </Button>
               </Box>
             </Box>
